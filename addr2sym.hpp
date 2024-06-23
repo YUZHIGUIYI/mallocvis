@@ -2,9 +2,25 @@
 
 #include <string>
 
+namespace guard {
+    struct SymbolGuard
+    {
+        SymbolGuard();
+        ~SymbolGuard();
+    };
+};
+
 #if __unix__
 # include <cxxabi.h>
 # include <execinfo.h>
+
+inline guard::SymbolGuard::SymbolGuard()
+{
+}
+
+inline guard::SymbolGuard::~SymbolGuard()
+{
+}
 
 inline std::string addr2sym(void *addr) {
     if (addr == nullptr) {
@@ -45,13 +61,30 @@ inline std::string addr2sym(void *addr) {
     return ret;
 }
 #elif _MSC_VER
-# include <dbghelp.h>
-# include <windows.h>
-# include <stdio.h>
+# include <Windows.h>
+# include <DbgHelp.h>
+# include <cstdio>
+
+#undef max
+#undef min
+#undef near
+#undef far
 
 # pragma comment(lib, "dbghelp.lib")
 
 extern "C" char *__unDName(char *, char const *, int, void *, void *, int);
+
+inline guard::SymbolGuard::SymbolGuard()
+{
+    auto process_handle = GetCurrentProcess();
+    SymInitialize(process_handle, nullptr, TRUE);
+}
+
+inline guard::SymbolGuard::~SymbolGuard()
+{
+    auto process_handle = GetCurrentProcess();
+    SymCleanup(process_handle);
+}
 
 inline std::string addr2sym(void *addr) {
     if (addr == nullptr) {
@@ -70,16 +103,33 @@ inline std::string addr2sym(void *addr) {
     }
     std::string name(pSymbol->Name);
     // demangle
-    char undname[1024];
-    __unDName(undname, name.c_str() + 1, sizeof(undname), malloc, free, 0x2800);
-    name = undname;
+//    char undname[1024];
+//    __unDName(undname, name.c_str() + 1, sizeof(undname), malloc, free, 0x2800);
+//    name = undname;
     return name;
 }
 #elif _WIN32
+# include <Windows.h>
 # include <dbghelp.h>
-# include <windows.h>
+
+#undef max
+#undef min
+#undef near
+#undef far
 
 # pragma comment(lib, "dbghelp.lib")
+
+inline guard::SymbolGuard::SymbolGuard()
+{
+    auto process_handle = GetCurrentProcess();
+    SymInitialize(process_handle, nullptr, TRUE);
+}
+
+inline guard::SymbolGuard::~SymbolGuard()
+{
+    auto process_handle = GetCurrentProcess();
+    SymCleanup(process_handle);
+}
 
 inline std::string addr2sym(void *addr) {
     DWORD64 dwDisplacement;

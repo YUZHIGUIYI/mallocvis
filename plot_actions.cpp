@@ -2,10 +2,8 @@
 #include "addr2sym.hpp"
 #include "alloc_action.hpp"
 #include <algorithm>
-#ifdef __has_include
-#if __cplusplus >= 201703L && __has_include(<charconv>)
+#if __has_include(<charconv>)
 #include <charconv>
-#endif
 #endif
 #include <cstdlib>
 #include <unordered_map>
@@ -620,8 +618,9 @@ void plot_alloc_actions(std::vector<AllocAction> actions,
             };
 
         SvgWriter svg(options.path.empty() ? "malloc.html" : options.path, total_width, total_height, options.svg_margin);
-        double y = 0;
+
         std::cerr << "Generating SVG graph...\n";
+        guard::SymbolGuard symbol_guard{};  // Initialize and clear symbol on Windows platform, do nothing on Linux platform
         if (options.layout == PlotOptions::Address) {
             for (auto const &block: dead) {
                 double width = (block.end_time - block.start_time) * width_scale;
@@ -662,6 +661,7 @@ void plot_alloc_actions(std::vector<AllocAction> actions,
                 }
             }
         } else {
+            double y = 0.0;
             for (auto const &block: dead) {
                 double width = (block.end_time - block.start_time) * width_scale;
                 double height = eval_height(block) * height_scale;
@@ -717,8 +717,8 @@ void plot_alloc_actions(std::vector<AllocAction> actions,
             return r;
         };
         for (auto const &block: dead) {
-            std::cout << repeat(block.start_time - start_time, " ", "┌");
-            std::cout << repeat(block.end_time - block.start_time, "─", "┐");
+            std::cout << repeat(block.start_time - start_time, " ", "\u250c");  // "┌"
+            std::cout << repeat(block.end_time - block.start_time, "─", "\u2510");  // "┐"
             std::cout << block.size << '\n';
         }
     }

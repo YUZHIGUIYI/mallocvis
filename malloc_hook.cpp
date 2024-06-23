@@ -14,12 +14,14 @@
 # include <sys/mman.h>
 # include <unistd.h>
 #elif _WIN32
-# include <windows.h>
-#endif
-#if __cplusplus >= 201703L
-# include <memory_resource>
+#include <Windows.h>
+#undef max
+#undef min
+#undef near
+#undef far
 #endif
 #if __cpp_lib_memory_resource
+#include <memory_resource>
 # define PMR std::pmr
 # define PMR_RES(x) \
      { x }
@@ -44,10 +46,15 @@ uint32_t get_thread_id() {
 }
 
 struct alignas(64) PerThreadData {
-#if HAS_PMR
+#if HAS_PMR && defined(__unix__)
     size_t bufsz = 64 * 1024 * 1024;
     void *buf = mmap(nullptr, bufsz, PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    std::pmr::monotonic_buffer_resource mono{buf, bufsz};
+    std::pmr::unsynchronized_pool_resource pool{&mono};
+#elif HAS_PMR && defined(_WIN32)
+    size_t bufsz = 64 * 1024 * 1024;
+    void *buf = VirtualAlloc(nullptr, bufsz, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     std::pmr::monotonic_buffer_resource mono{buf, bufsz};
     std::pmr::unsynchronized_pool_resource pool{&mono};
 #endif
@@ -90,10 +97,15 @@ struct GlobalData {
 
 #if HAS_THREADS
     void export_thread_entry(std::string const &path) {
-#if HAS_PMR
+#if HAS_PMR && defined(__unix__)
         size_t bufsz = 64 * 1024 * 1024;
         void *buf = mmap(nullptr, bufsz, PROT_READ | PROT_WRITE,
                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        std::pmr::monotonic_buffer_resource mono{buf, bufsz};
+        std::pmr::unsynchronized_pool_resource pool{&mono};
+#elif HAS_PMR && defined(_WIN32)
+        size_t bufsz = 64 * 1024 * 1024;
+        void *buf = VirtualAlloc(nullptr, bufsz, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
         std::pmr::monotonic_buffer_resource mono{buf, bufsz};
         std::pmr::unsynchronized_pool_resource pool{&mono};
 #endif
@@ -249,11 +261,27 @@ static void *msvc_reallocarray(void *ptr, size_t nmemb, size_t size) noexcept {
     return msvc_realloc(ptr, nmemb * size);
 }
 
+static void *msvc_memalign_malloc(size_t align, size_t size) noexcept
+{
+    return _aligned_malloc(size, align);
+}
+
+static void msvc_memalign_free(void *ptr, size_t align) noexcept
+{
+    _aligned_free(ptr);
+}
+
 # define REAL_LIBC(name)      msvc_##name
 # define MAY_OVERRIDE_MALLOC  1
-# define MAY_SUPPORT_MEMALIGN 0
+# define MAY_SUPPORT_MEMALIGN 1
 
 # include <intrin.h>
+void *return_address_func()
+{
+    void *return_address = nullptr;
+    RtlCaptureStackBackTrace(2, 1, &return_address, nullptr);
+    return return_address;
+}
 
 # pragma intrinsic(_ReturnAddress)
 # define RETURN_ADDRESS _ReturnAddress()
@@ -466,13 +494,17 @@ void operator delete[](void *ptr, size_t size) noexcept {
 #endif
 
 #if (__cplusplus > 201402L || defined(__cpp_aligned_new))
-# if MAY_SUPPORT_MEMALIGN
+#if MAY_SUPPORT_MEMALIGN
 void operator delete(void *ptr, std::align_val_t align) noexcept {
     EnableGuard ena;
     if (ena) {
         ena.on(AllocOp::Delete, ptr, kNone, (size_t)align, RETURN_ADDRESS);
     }
+#if __GNUC__
     REAL_LIBC(free)(ptr);
+#elif _MSC_VER
+    REAL_LIBC(memalign_free)(ptr, (size_t)align);
+#endif
 }
 
 void operator delete[](void *ptr, std::align_val_t align) noexcept {
@@ -480,7 +512,11 @@ void operator delete[](void *ptr, std::align_val_t align) noexcept {
     if (ena) {
         ena.on(AllocOp::DeleteArray, ptr, kNone, (size_t)align, RETURN_ADDRESS);
     }
+#if __GNUC__
     REAL_LIBC(free)(ptr);
+#elif _MSC_VER
+    REAL_LIBC(memalign_free)(ptr, (size_t)align);
+#endif
 }
 
 void operator delete(void *ptr, size_t size, std::align_val_t align) noexcept {
@@ -488,7 +524,11 @@ void operator delete(void *ptr, size_t size, std::align_val_t align) noexcept {
     if (ena) {
         ena.on(AllocOp::Delete, ptr, size, (size_t)align, RETURN_ADDRESS);
     }
+#if __GNUC__
     REAL_LIBC(free)(ptr);
+#elif _MSC_VER
+    REAL_LIBC(memalign_free)(ptr, (size_t)align);
+#endif
 }
 
 void operator delete[](void *ptr, size_t size,
@@ -497,7 +537,11 @@ void operator delete[](void *ptr, size_t size,
     if (ena) {
         ena.on(AllocOp::DeleteArray, ptr, size, (size_t)align, RETURN_ADDRESS);
     }
+#if __GNUC__
     REAL_LIBC(free)(ptr);
+#elif _MSC_VER
+    REAL_LIBC(memalign_free)(ptr, (size_t)align);
+#endif
 }
 
 void operator delete(void *ptr, std::align_val_t align,
@@ -506,7 +550,11 @@ void operator delete(void *ptr, std::align_val_t align,
     if (ena) {
         ena.on(AllocOp::Delete, ptr, kNone, (size_t)align, RETURN_ADDRESS);
     }
+#if __GNUC__
     REAL_LIBC(free)(ptr);
+#elif _MSC_VER
+    REAL_LIBC(memalign_free)(ptr, (size_t)align);
+#endif
 }
 
 void operator delete[](void *ptr, std::align_val_t align,
@@ -515,12 +563,20 @@ void operator delete[](void *ptr, std::align_val_t align,
     if (ena) {
         ena.on(AllocOp::DeleteArray, ptr, kNone, (size_t)align, RETURN_ADDRESS);
     }
+#if __GNUC__
     REAL_LIBC(free)(ptr);
+#elif _MSC_VER
+    REAL_LIBC(memalign_free)(ptr, (size_t)align);
+#endif
 }
 
 void *operator new(size_t size, std::align_val_t align) noexcept(false) {
     EnableGuard ena;
+#if __GNUC__
     void *ptr = REAL_LIBC(memalign)((size_t)align, size);
+#elif _MSC_VER
+    void *ptr = REAL_LIBC(memalign_malloc)((size_t)align, size);
+#endif
     if (ena) {
         ena.on(AllocOp::New, ptr, size, (size_t)align, RETURN_ADDRESS);
     }
@@ -532,7 +588,11 @@ void *operator new(size_t size, std::align_val_t align) noexcept(false) {
 
 void *operator new[](size_t size, std::align_val_t align) noexcept(false) {
     EnableGuard ena;
+#if __GNUC__
     void *ptr = REAL_LIBC(memalign)((size_t)align, size);
+#elif _MSC_VER
+    void *ptr = REAL_LIBC(memalign_malloc)((size_t)align, size);
+#endif
     if (ena) {
         ena.on(AllocOp::NewArray, ptr, size, (size_t)align, RETURN_ADDRESS);
     }
@@ -545,7 +605,11 @@ void *operator new[](size_t size, std::align_val_t align) noexcept(false) {
 void *operator new(size_t size, std::align_val_t align,
                    std::nothrow_t const &) noexcept {
     EnableGuard ena;
+#if __GNUC__
     void *ptr = REAL_LIBC(memalign)((size_t)align, size);
+#elif _MSC_VER
+    void *ptr = REAL_LIBC(memalign_malloc)((size_t)align, size);
+#endif
     if (ena) {
         ena.on(AllocOp::New, ptr, size, (size_t)align, RETURN_ADDRESS);
     }
@@ -555,11 +619,15 @@ void *operator new(size_t size, std::align_val_t align,
 void *operator new[](size_t size, std::align_val_t align,
                      std::nothrow_t const &) noexcept {
     EnableGuard ena;
+#if __GNUC__
     void *ptr = REAL_LIBC(memalign)((size_t)align, size);
+#elif _MSC_VER
+    void *ptr = REAL_LIBC(memalign_malloc)((size_t)align, size);
+#endif
     if (ena) {
         ena.on(AllocOp::NewArray, ptr, size, (size_t)align, RETURN_ADDRESS);
     }
     return ptr;
 }
-# endif
+#endif
 #endif
