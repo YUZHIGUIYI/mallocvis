@@ -46,15 +46,16 @@ uint32_t get_thread_id() {
 }
 
 struct alignas(64) PerThreadData {
-#if HAS_PMR && defined(__unix__)
-    size_t bufsz = 64 * 1024 * 1024;
+#if HAS_PMR
+    const size_t bufsz = 64 * 1024 * 1024;
+#if __unix__
     void *buf = mmap(nullptr, bufsz, PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    std::pmr::monotonic_buffer_resource mono{buf, bufsz};
-    std::pmr::unsynchronized_pool_resource pool{&mono};
-#elif HAS_PMR && defined(_WIN32)
-    size_t bufsz = 64 * 1024 * 1024;
+#elif _WIN32
     void *buf = VirtualAlloc(nullptr, bufsz, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+#else
+    static char buf[bufsz];
+#endif
     std::pmr::monotonic_buffer_resource mono{buf, bufsz};
     std::pmr::unsynchronized_pool_resource pool{&mono};
 #endif
@@ -97,15 +98,16 @@ struct GlobalData {
 
 #if HAS_THREADS
     void export_thread_entry(std::string const &path) {
-#if HAS_PMR && defined(__unix__)
-        size_t bufsz = 64 * 1024 * 1024;
+#if HAS_PMR
+        const size_t bufsz = 64 * 1024 * 1024;
+#if __unix__
         void *buf = mmap(nullptr, bufsz, PROT_READ | PROT_WRITE,
                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        std::pmr::monotonic_buffer_resource mono{buf, bufsz};
-        std::pmr::unsynchronized_pool_resource pool{&mono};
-#elif HAS_PMR && defined(_WIN32)
-        size_t bufsz = 64 * 1024 * 1024;
+#elif _WIN32
         void *buf = VirtualAlloc(nullptr, bufsz, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+#else
+        static char buf[bufsz];
+#endif
         std::pmr::monotonic_buffer_resource mono{buf, bufsz};
         std::pmr::unsynchronized_pool_resource pool{&mono};
 #endif
@@ -159,7 +161,7 @@ struct GlobalData {
                 actions.insert(actions.end(), their_actions.begin(),
                                their_actions.end());
             }
-            plot_alloc_actions(std::move(actions));
+            mallocvis_plot_alloc_actions(std::move(actions));
         }
     }
 } global;

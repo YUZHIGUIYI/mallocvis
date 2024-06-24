@@ -14,16 +14,7 @@
 
 using namespace std::chrono_literals;
 
-struct alignas(64) AlignStruct
-{
-    int value = 0;
-};
-
 int main() {
-    {  // Align new and delete
-        AlignStruct *ptr = new AlignStruct{};
-        delete ptr;
-    }
     { // vector
         std::vector<int> a;
         for (int i = 0; i < 200; i++) {
